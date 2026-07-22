@@ -20,6 +20,7 @@ pub fn extract_doc_comments(
     };
     match hdlutil::pick_definition(defs, &input.name) {
         Some(module) => {
+            let has_error = module.has_error;
             let port_docs: Vec<PortDoc> = module
                 .ports
                 .into_iter()
@@ -33,6 +34,7 @@ pub fn extract_doc_comments(
                 module_doc: module.doc,
                 port_docs,
                 error: String::new(),
+                has_error,
             })
         }
         None => Ok(DocCommentSummary { language, found: false, ..Default::default() }),

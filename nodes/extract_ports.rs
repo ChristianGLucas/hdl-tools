@@ -25,6 +25,7 @@ pub fn extract_ports(
             count: module.ports.len() as u32,
             ports: module.ports,
             error: String::new(),
+            has_error: module.has_error,
         }),
         None => Ok(PortList { language, found: false, ..Default::default() }),
     }

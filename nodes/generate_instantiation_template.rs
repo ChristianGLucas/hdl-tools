@@ -90,5 +90,6 @@ pub fn generate_instantiation_template(
         port_connections,
         param_connections,
         error: String::new(),
+        has_error: module.has_error,
     })
 }

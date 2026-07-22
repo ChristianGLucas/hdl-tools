@@ -682,6 +682,12 @@ fn extract_verilog_module(module_decl: Node, source: &str) -> HdlModule {
         ports,
         parameters,
         doc: leading_doc(module_decl, source),
+        // has_error on the module's OWN subtree (not the whole file): a
+        // syntax problem elsewhere in the source must not taint an otherwise
+        // clean module, but a problem inside THIS module's header/port list
+        // (e.g. a missing separator between two ports) can silently produce
+        // wrong ports/directions above, so callers need this signal.
+        has_error: module_decl.has_error(),
     }
 }
 
@@ -859,6 +865,7 @@ fn extract_vhdl_entity(entity_decl: Node, source: &str) -> HdlModule {
         ports,
         parameters,
         doc: leading_doc(entity_decl, source),
+        has_error: entity_decl.has_error(),
     }
 }
 

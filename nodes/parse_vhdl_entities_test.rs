@@ -31,6 +31,7 @@ mod tests {
         let e = &out.entities[0];
         assert_eq!(e.name, "counter");
         assert_eq!(e.kind, "entity");
+        assert!(!e.has_error);
         assert_eq!(e.doc, "A simple up counter with synchronous reset.");
 
         assert_eq!(e.parameters.len(), 2);
@@ -63,6 +64,21 @@ mod tests {
         assert_eq!(out.error, "");
         assert!(out.has_error);
         assert_eq!(out.entity_count, 0);
+    }
+
+    // Regression (found by adversarial review): the entity IS found (its
+    // name parses cleanly) but its port list contains a syntax error — the
+    // per-entity has_error must be true even though the file-level parse
+    // otherwise "succeeds" (an entity was recovered), so a caller can tell
+    // the extracted ports (direction flipped, one dropped) are not reliable.
+    #[test]
+    fn test_entity_with_malformed_port_list_flags_entity_has_error() {
+        let ax = test_context();
+        let out = parse_vhdl_entities(&ax, src(VHDL_PORT_LIST_MISSING_SEMICOLON)).unwrap();
+        assert_eq!(out.error, "");
+        assert_eq!(out.entity_count, 1);
+        assert_eq!(out.entities[0].name, "top");
+        assert!(out.entities[0].has_error);
     }
 
     #[test]

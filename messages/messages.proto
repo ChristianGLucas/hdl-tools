@@ -106,6 +106,17 @@ message HdlModule {
   repeated HdlParam parameters = 4;
   // Doc comment immediately preceding the module/entity declaration, if any.
   string doc = 5;
+  // True if THIS module/entity's own declaration contains an ERROR/MISSING
+  // node (a syntax problem inside its header/port/generic list specifically —
+  // not merely somewhere else in the file). When true, ports/parameters were
+  // extracted best-effort from a malformed parse and individual fields
+  // (especially direction, and which ports/generics were even found) may be
+  // wrong or incomplete — a realistic example is a missing separator between
+  // two port declarations, which can silently flip a direction and drop a
+  // port. Callers that need certainty should treat has_error=true results as
+  // untrustworthy and fall back to ValidateSyntax for the precise issue
+  // locations, rather than trusting the extracted structure.
+  bool has_error = 6;
 }
 
 // A declaration inside a VHDL package: a type, subtype, constant, function,
@@ -215,6 +226,10 @@ message PortList {
   repeated HdlPort ports = 4;
   uint32 count = 5;
   string error = 6;
+  // True if the module/entity's own declaration contains a syntax error —
+  // see HdlModule.has_error. When true, treat `ports` as best-effort and
+  // potentially wrong (a direction flipped, a port dropped), not authoritative.
+  bool has_error = 7;
 }
 
 // Emitted by ExtractParameters.
@@ -225,6 +240,8 @@ message ParamList {
   repeated HdlParam parameters = 4;
   uint32 count = 5;
   string error = 6;
+  // See PortList.has_error — same meaning, for `parameters`.
+  bool has_error = 7;
 }
 
 // One port's associated doc comment. Emitted within DocCommentSummary.
@@ -243,6 +260,9 @@ message DocCommentSummary {
   // Doc comments on each port that has one (ports with no doc are omitted).
   repeated PortDoc port_docs = 5;
   string error = 6;
+  // See PortList.has_error — same meaning, for the module/port set the doc
+  // comments were associated against.
+  bool has_error = 7;
 }
 
 // Emitted by Summarize.
@@ -290,6 +310,11 @@ message InstantiationTemplate {
   repeated PortConnection port_connections = 5;
   repeated ParamConnection param_connections = 6;
   string error = 7;
+  // See PortList.has_error — same meaning. When true, the snippet was built
+  // from a best-effort, potentially-wrong extraction; verify with
+  // ValidateSyntax before trusting it, especially the port connection order
+  // and directions.
+  bool has_error = 8;
 }
 
 // Emitted by ValidateSyntax.

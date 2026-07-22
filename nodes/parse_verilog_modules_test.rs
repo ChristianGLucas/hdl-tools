@@ -30,6 +30,7 @@ mod tests {
         assert_eq!(out.modules.len(), 1);
         let m = &out.modules[0];
         assert_eq!(m.name, "counter");
+        assert!(!m.has_error);
         assert_eq!(m.kind, "module");
         assert_eq!(m.doc, "A simple up counter with synchronous reset.");
 

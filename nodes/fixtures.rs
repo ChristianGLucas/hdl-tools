@@ -97,3 +97,19 @@ end package math_pkg;
 /// Deliberately malformed VHDL: an entity with an unterminated generic
 /// clause and no `end entity`.
 pub const VHDL_MALFORMED: &str = "entity broken is\n  generic (\n    W : integer :=\n";
+
+/// A found-by-the-adversarial-reviewer regression case: an otherwise-valid,
+/// findable VHDL entity ("top" parses and IS found by name) but with a
+/// missing semicolon between its two port declarations. tree-sitter's error
+/// recovery absorbs the second port into an ERROR node, which silently
+/// flips the first port's reported direction and drops the second port
+/// entirely — has_error on the returned module/port-list is what lets a
+/// caller detect that the extracted ports are not trustworthy here.
+pub const VHDL_PORT_LIST_MISSING_SEMICOLON: &str = "\
+entity top is
+  port (
+    a : in std_logic
+    b : out std_logic
+  );
+end entity top;
+";

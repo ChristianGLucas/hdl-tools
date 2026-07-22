@@ -26,6 +26,7 @@ pub fn extract_parameters(
             count: module.parameters.len() as u32,
             parameters: module.parameters,
             error: String::new(),
+            has_error: module.has_error,
         }),
         None => Ok(ParamList { language, found: false, ..Default::default() }),
     }

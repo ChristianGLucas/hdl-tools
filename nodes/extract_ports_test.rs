@@ -26,6 +26,7 @@ mod tests {
         let out = extract_ports(&ax, query(VERILOG_COUNTER, "counter")).unwrap();
         assert_eq!(out.error, "");
         assert!(out.found);
+        assert!(!out.has_error);
         assert_eq!(out.module_name, "counter");
         assert_eq!(out.count, 3);
         assert_eq!(out.ports[2].name, "count");
@@ -37,8 +38,24 @@ mod tests {
         let ax = test_context();
         let out = extract_ports(&ax, query(VHDL_COUNTER, "")).unwrap();
         assert!(out.found);
+        assert!(!out.has_error);
         assert_eq!(out.count, 3);
         assert_eq!(out.ports[2].width, "(WIDTH-1 downto 0)");
+    }
+
+    // Regression (found by adversarial review): a missing semicolon between
+    // two port declarations makes the grammar's error recovery absorb the
+    // second port into an ERROR node, which can silently flip the first
+    // port's direction and drop the second. The entity is still `found`
+    // (its name parses fine) but has_error MUST be true so a caller knows
+    // not to trust the extracted ports without independent verification.
+    #[test]
+    fn test_malformed_port_list_surfaces_has_error() {
+        let ax = test_context();
+        let out = extract_ports(&ax, query(VHDL_PORT_LIST_MISSING_SEMICOLON, "top")).unwrap();
+        assert_eq!(out.error, "");
+        assert!(out.found);
+        assert!(out.has_error, "a syntax error inside the picked entity's own port list must be surfaced");
     }
 
     #[test]

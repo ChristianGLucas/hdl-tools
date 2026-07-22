@@ -85,4 +85,16 @@ mod tests {
         assert!(!out.found);
         assert_eq!(out.snippet, "");
     }
+
+    // Regression (found by adversarial review): a malformed port list inside
+    // the picked entity must surface has_error so a caller does not blindly
+    // trust a snippet built from a wrong direction / dropped port.
+    #[test]
+    fn test_malformed_port_list_surfaces_has_error() {
+        let ax = test_context();
+        let out =
+            generate_instantiation_template(&ax, query(VHDL_PORT_LIST_MISSING_SEMICOLON, "top")).unwrap();
+        assert!(out.found);
+        assert!(out.has_error);
+    }
 }

@@ -20,6 +20,7 @@ pub fn extract_output_ports(
     };
     match hdlutil::pick_definition(defs, &input.name) {
         Some(module) => {
+            let has_error = module.has_error;
             let ports: Vec<_> = module.ports.into_iter().filter(|p| p.direction == "output").collect();
             Ok(PortList {
                 language,
@@ -28,6 +29,7 @@ pub fn extract_output_ports(
                 count: ports.len() as u32,
                 ports,
                 error: String::new(),
+                has_error,
             })
         }
         None => Ok(PortList { language, found: false, ..Default::default() }),
