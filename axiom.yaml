@@ -1,0 +1,80 @@
+name: christiangeorgelucas/hdl-tools
+version: 0.1.0
+language: rust
+description: >-
+  Deterministic structural parsing and interface inspection for Hardware
+  Description Language source — Verilog, SystemVerilog and VHDL. Detect the
+  dialect, parse modules/entities/packages, extract ports (direction, type,
+  bit width), parameters/generics, doc comments and syntax issues, and
+  generate ready-to-copy instantiation templates. Wraps the MIT tree-sitter
+  grammars tree-sitter-systemverilog (IEEE 1800-2017) and tree-sitter-vhdl.
+  Pure static text parsing — no synthesis, simulation, or network access.
+license: MIT
+author: Christian George Lucas
+tags:
+  - hdl
+  - verilog
+  - systemverilog
+  - vhdl
+  - fpga
+  - asic
+  - hardware-design
+  - tree-sitter
+  - parsing
+nodes:
+    - name: DetectLanguage
+      description: Detect whether HDL source text is Verilog/SystemVerilog or VHDL by parsing it with both grammars and comparing syntax-error counts (the grammar that parses cleaner wins) — an objective, parser-verified signal rather than a keyword guess. Returns a confidence score and both error counts; empty language means neither grammar made sense of the input.
+      input: HdlSource
+      output: LanguageDetection
+    - name: ParseVerilogModules
+      description: Parse Verilog or SystemVerilog source (IEEE 1800-2017 grammar) into every module it defines, each with its full port list (name, direction, type, bit width) and parameter list (name, type, default). Malformed source still returns whatever modules could be recovered, with has_error set.
+      input: HdlSource
+      output: VerilogModuleList
+    - name: ParseVhdlEntities
+      description: Parse VHDL source into every entity it declares, each with its full port list (name, mode/direction, type, vector range) and generic list (name, type, default). Handles standalone entity declarations directly (not only the legacy component-mirror idiom). Malformed source still returns whatever entities could be recovered, with has_error set.
+      input: HdlSource
+      output: VhdlEntityList
+    - name: ParseVhdlPackages
+      description: Parse VHDL source into every package it declares, each with its directly-declared types, subtypes, constants, and function/procedure signatures. Malformed source still returns whatever packages could be recovered, with has_error set.
+      input: HdlSource
+      output: VhdlPackageList
+    - name: ListDefinitions
+      description: List the names of every module/entity defined in an HDL source, auto-detecting Verilog/SystemVerilog vs VHDL (or honoring an explicit language hint). The cheapest way to answer 'what does this file define' before extracting a specific interface.
+      input: HdlSource
+      output: DefinitionList
+    - name: ExtractDefinition
+      description: Extract one named module (Verilog/SystemVerilog) or entity (VHDL) by name from a source and return its full interface — every port and every parameter/generic. found is false if the name is not defined in the source.
+      input: NamedHdlQuery
+      output: HdlInterface
+    - name: ExtractPorts
+      description: Extract the full port list — name, direction, data type, and bit width/vector range — for a named module/entity (or the first one found if name is empty).
+      input: NamedHdlQuery
+      output: PortList
+    - name: ExtractInputPorts
+      description: Extract only the input-direction ports of a named module/entity (or the first one found if name is empty) — the signals a caller must drive. A filtered convenience view over ExtractPorts for testbench/driver generation.
+      input: NamedHdlQuery
+      output: PortList
+    - name: ExtractOutputPorts
+      description: Extract only the output-direction ports of a named module/entity (or the first one found if name is empty) — the signals a caller should observe. A filtered convenience view over ExtractPorts for testbench/monitor generation.
+      input: NamedHdlQuery
+      output: PortList
+    - name: ExtractParameters
+      description: Extract the parameters (Verilog/SystemVerilog "parameter") or generics (VHDL "generic") of a named module/entity — name, declared type, and default value — for a named module/entity (or the first one found if name is empty).
+      input: NamedHdlQuery
+      output: ParamList
+    - name: ExtractDocComments
+      description: Extract the documentation comments associated with a named module/entity and its ports — the comment immediately above the declaration, and any comment directly attached to each port (leading or same-line trailing). Ports with no comment are omitted from port_docs.
+      input: NamedHdlQuery
+      output: DocCommentSummary
+    - name: Summarize
+      description: Compute summary counts for an HDL source — number of modules/entities/packages found and total ports/parameters across them — plus the detected language. A compact structural fingerprint without extracting every full interface.
+      input: HdlSource
+      output: HdlSummary
+    - name: GenerateInstantiationTemplate
+      description: 'Generate a ready-to-copy instantiation template for a named module/entity: a named-port Verilog/SystemVerilog instantiation (with a parameter override block if it has parameters) or a VHDL component declaration plus port-map/generic-map instantiation, along with the structured port and parameter connection lists the snippet is built from — the ''how do I wire this up'' node.'
+      input: NamedHdlQuery
+      output: InstantiationTemplate
+    - name: ValidateSyntax
+      description: Validate that HDL source parses cleanly and report every syntax issue found (ERROR or MISSING regions with byte/row/column spans). ok is true only when there are no issues; this never fails on malformed input — it reports the problem structurally.
+      input: HdlSource
+      output: SyntaxValidation

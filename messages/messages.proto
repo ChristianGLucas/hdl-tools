@@ -1,0 +1,302 @@
+// This file defines the data contracts (messages) for your Axiom package.
+// Every node's --input and --output refers to a message defined here.
+//
+// Run `axiom create message <Name>` to scaffold a new message below.
+// Run `axiom generate` to compile these definitions into language bindings in gen/.
+//
+// DOCUMENTATION
+//   Comments written directly above a message or field declaration are extracted
+//   automatically at publish time and shown in the Axiom registry as documentation.
+//   Write your descriptions there — no separate doc files needed.
+//
+//   Leading comment  (no blank line before the declaration) → registry description ✓
+//   Detached comment (blank line before the declaration)    → ignored by registry  ✗
+//
+// This file is yours to edit. Axiom only appends new message blocks — it never
+// overwrites or removes content you have written.
+//
+// --- christiangeorgelucas/hdl-tools data contracts ---
+//
+// This package parses Hardware Description Language SOURCE TEXT — Verilog /
+// SystemVerilog (IEEE 1800-2017, one grammar covers both) and VHDL — into
+// structured interfaces: module/entity names, ports (direction, type, bit
+// width), and parameters/generics. It wraps two MIT tree-sitter grammars
+// (tree-sitter-systemverilog, tree-sitter-vhdl) that do the actual parsing;
+// this package's own code only walks the resulting syntax tree to pull out
+// the interface-level facts an FPGA/ASIC integration agent needs. Pure static
+// analysis: no synthesis, no simulation, no network, no wall-clock, no
+// randomness.
+//
+// The canonical input envelope is HdlSource (text + an optional language
+// hint), matching the `text`-field convention used by christiangeorgelucas/
+// code-parse-tools (this package's nearest flow-neighbor) so a value produced
+// by another package's text-shaped output composes cleanly here.
+//
+// Error contract (shared with our other packages): every output has a scalar
+// `error` field — empty on success; a stable, human-readable token on
+// failure, with all other fields left at their zero value. Malformed HDL
+// source is NOT a top-level `error` — it is reported structurally (has_error /
+// issues) with an empty `error`, the same distinction code-parse-tools makes.
+
+syntax = "proto3";
+
+package christiangeorgelucas.hdl_tools;
+
+// The canonical input envelope: a chunk of HDL source text plus an optional
+// language hint.
+message HdlSource {
+  // The HDL source to parse. UTF-8. Rejected with a structured
+  // INPUT_TOO_LARGE error above ~2 MB (2,000,000 bytes).
+  string text = 1;
+  // Optional hint, case-insensitive: "verilog", "systemverilog" (alias "sv")
+  // — both parsed by the same IEEE-1800 grammar — or "vhdl". Leave empty to
+  // auto-detect (parse with both grammars; the one with fewer syntax errors
+  // wins). Nodes that are already language-specific by name (e.g.
+  // ParseVerilogModules, ParseVhdlEntities) ignore this field and always use
+  // their fixed grammar.
+  string language = 2;
+}
+
+// Input for nodes that operate on one named module/entity within a source.
+message NamedHdlQuery {
+  HdlSource source = 1;
+  // The module (Verilog/SystemVerilog) or entity (VHDL) name to target. Empty
+  // means "the first module/entity definition found in source order".
+  string name = 2;
+}
+
+// One port on a module/entity interface.
+message HdlPort {
+  string name = 1;
+  // Normalized direction: "input", "output", "inout", or "buffer" (VHDL
+  // buffer mode only). Unrecognized/unparsed direction is "".
+  string direction = 2;
+  // The base data type as written, e.g. "wire", "reg", "std_logic",
+  // "std_logic_vector", "logic". Not normalized across dialects.
+  string data_type = 3;
+  // The raw bit-width / vector-range text as written, e.g. "[7:0]" (Verilog)
+  // or "(7 downto 0)" (VHDL). Empty for a scalar (1-bit) port.
+  string width = 4;
+  // Doc comment immediately associated with this port (a same-line trailing
+  // comment, or a line comment on the line directly above with no blank line
+  // between), if any. Empty if none.
+  string doc = 5;
+}
+
+// One parameter (Verilog `parameter`) or generic (VHDL `generic`).
+message HdlParam {
+  string name = 1;
+  // The declared type, e.g. "integer", "std_logic", or "" if untyped
+  // (Verilog parameters are often untyped).
+  string data_type = 2;
+  // The default value as written, e.g. "8" or "'0'". Empty if none.
+  string default_value = 3;
+  string doc = 4;
+}
+
+// A Verilog/SystemVerilog module OR a VHDL entity — structurally identical
+// (name + ports + parameters/generics), so one message serves both. `kind`
+// disambiguates when a caller needs to know which.
+message HdlModule {
+  string name = 1;
+  // "module" (Verilog/SystemVerilog) or "entity" (VHDL).
+  string kind = 2;
+  repeated HdlPort ports = 3;
+  // Verilog `parameter`s or VHDL `generic`s.
+  repeated HdlParam parameters = 4;
+  // Doc comment immediately preceding the module/entity declaration, if any.
+  string doc = 5;
+}
+
+// A declaration inside a VHDL package: a type, subtype, constant, function,
+// or procedure signature.
+message HdlPackageItem {
+  string name = 1;
+  // "type", "subtype", "constant", "function", or "procedure".
+  string kind = 2;
+  // For "type"/"subtype": the type-of / base-type text, e.g. "array",
+  // "record", "std_logic". For "constant": its declared type. For
+  // "function"/"procedure": ignored (see parameters/return_type below).
+  string type_info = 3;
+  // For "constant": the value as written. Empty otherwise.
+  string value = 4;
+  // For "function"/"procedure": its formal parameters.
+  repeated HdlParam parameters = 5;
+  // For "function": the declared return type. Empty for procedures and
+  // non-subprogram items.
+  string return_type = 6;
+  string doc = 7;
+}
+
+// A VHDL package declaration: its name plus every type/subtype/constant/
+// function/procedure declared directly in the package header.
+message HdlPackage {
+  string name = 1;
+  repeated HdlPackageItem items = 2;
+}
+
+// One ERROR or MISSING region reported by the grammar's error recovery.
+message HdlSyntaxIssue {
+  // "ERROR" (unparseable) or "MISSING" (grammar inserted a zero-width node
+  // to recover).
+  string kind = 1;
+  uint32 start_byte = 2;
+  uint32 end_byte = 3;
+  uint32 start_row = 4;
+  uint32 start_column = 5;
+  uint32 end_row = 6;
+  uint32 end_column = 7;
+}
+
+// Emitted by DetectLanguage.
+message LanguageDetection {
+  // "verilog" (covers Verilog and SystemVerilog — one grammar), "vhdl", or
+  // "" if neither grammar could make sense of the input at all.
+  string language = 1;
+  // 0.0-1.0 confidence derived from the relative parse-error counts between
+  // the two grammars: 1.0 = the winning grammar parsed with zero errors and
+  // the other did not; 0.5 = a weak/ambiguous signal.
+  double confidence = 2;
+  // Diagnostic detail backing the decision.
+  uint32 verilog_error_nodes = 3;
+  uint32 vhdl_error_nodes = 4;
+  string error = 5;
+}
+
+// Emitted by ParseVerilogModules.
+message VerilogModuleList {
+  repeated HdlModule modules = 1;
+  uint32 module_count = 2;
+  // True if the source had any ERROR/MISSING node anywhere (modules were
+  // still extracted best-effort).
+  bool has_error = 3;
+  string error = 4;
+}
+
+// Emitted by ParseVhdlEntities.
+message VhdlEntityList {
+  repeated HdlModule entities = 1;
+  uint32 entity_count = 2;
+  bool has_error = 3;
+  string error = 4;
+}
+
+// Emitted by ParseVhdlPackages.
+message VhdlPackageList {
+  repeated HdlPackage packages = 1;
+  uint32 package_count = 2;
+  bool has_error = 3;
+  string error = 4;
+}
+
+// Emitted by ListDefinitions.
+message DefinitionList {
+  // The language actually used to parse ("verilog" or "vhdl") — the supplied
+  // hint if given, else the auto-detected one.
+  string language = 1;
+  repeated string names = 2;
+  uint32 count = 3;
+  string error = 4;
+}
+
+// Emitted by ExtractDefinition.
+message HdlInterface {
+  string language = 1;
+  bool found = 2;
+  HdlModule module = 3;
+  string error = 4;
+}
+
+// Emitted by ExtractPorts / ExtractInputPorts / ExtractOutputPorts.
+message PortList {
+  string language = 1;
+  string module_name = 2;
+  bool found = 3;
+  repeated HdlPort ports = 4;
+  uint32 count = 5;
+  string error = 6;
+}
+
+// Emitted by ExtractParameters.
+message ParamList {
+  string language = 1;
+  string module_name = 2;
+  bool found = 3;
+  repeated HdlParam parameters = 4;
+  uint32 count = 5;
+  string error = 6;
+}
+
+// One port's associated doc comment. Emitted within DocCommentSummary.
+message PortDoc {
+  string port_name = 1;
+  string doc = 2;
+}
+
+// Emitted by ExtractDocComments.
+message DocCommentSummary {
+  string language = 1;
+  string module_name = 2;
+  bool found = 3;
+  // Doc comment on the module/entity declaration itself.
+  string module_doc = 4;
+  // Doc comments on each port that has one (ports with no doc are omitted).
+  repeated PortDoc port_docs = 5;
+  string error = 6;
+}
+
+// Emitted by Summarize.
+message HdlSummary {
+  // "verilog", "vhdl", or "" if nothing recognizable was found.
+  string language = 1;
+  uint32 module_count = 2;
+  uint32 entity_count = 3;
+  uint32 package_count = 4;
+  // Sum of ports across every module/entity found.
+  uint32 port_count = 5;
+  // Sum of parameters/generics across every module/entity found.
+  uint32 param_count = 6;
+  bool has_error = 7;
+  string error = 8;
+}
+
+// One port connection suggestion within an instantiation template.
+message PortConnection {
+  string port_name = 1;
+  string direction = 2;
+  // A suggested local signal name to wire to this port (defaults to the port
+  // name itself — the common convention).
+  string suggested_signal = 3;
+}
+
+// One parameter/generic override suggestion within an instantiation template.
+message ParamConnection {
+  string name = 1;
+  // The module/entity's own default, echoed for convenience (empty if the
+  // parameter/generic has no default).
+  string default_value = 2;
+}
+
+// Emitted by GenerateInstantiationTemplate.
+message InstantiationTemplate {
+  string language = 1;
+  string module_name = 2;
+  bool found = 3;
+  // A ready-to-copy instantiation snippet: for Verilog/SystemVerilog a
+  // named-port module instantiation (with a parameter override block if
+  // parameters exist); for VHDL a component declaration plus a `port map`/
+  // `generic map` instantiation.
+  string snippet = 4;
+  repeated PortConnection port_connections = 5;
+  repeated ParamConnection param_connections = 6;
+  string error = 7;
+}
+
+// Emitted by ValidateSyntax.
+message SyntaxValidation {
+  string language = 1;
+  bool ok = 2;
+  repeated HdlSyntaxIssue issues = 3;
+  uint32 issue_count = 4;
+  string error = 5;
+}
