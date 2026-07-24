@@ -45,8 +45,8 @@ package christiangeorgelucas.hdl_tools;
 // The canonical input envelope: a chunk of HDL source text plus an optional
 // language hint.
 message HdlSource {
-  // The HDL source to parse. UTF-8. Rejected with a structured
-  // INPUT_TOO_LARGE error above ~2 MB (2,000,000 bytes).
+  // The HDL source to parse. UTF-8. No package-level size limit — the
+  // platform bounds payload size.
   string text = 1;
   // Optional hint, case-insensitive: "verilog", "systemverilog" (alias "sv")
   // — both parsed by the same IEEE-1800 grammar — or "vhdl". Leave empty to

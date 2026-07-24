@@ -20,40 +20,17 @@ use crate::gen::messages::{
 };
 use tree_sitter::{Node, Parser, Tree};
 
-/// Max accepted source length in bytes, checked on the RAW input before any
-/// parse. Bounds allocation and output size up front. (~2 MiB, matching
-/// christiangeorgelucas/code-parse-tools' cap for the same reason.)
-pub const MAX_SOURCE_BYTES: usize = 2_000_000;
-/// Max number of modules/entities/packages collected from one source. Bounds
-/// output size on a pathological file with huge numbers of tiny definitions.
-pub const MAX_DEFINITIONS: usize = 5_000;
-/// Max number of ports or parameters/generics collected per module/entity.
-pub const MAX_ITEMS_PER_DEFINITION: usize = 5_000;
-/// Max number of package items (types/subtypes/constants/functions/
-/// procedures) collected per VHDL package.
-pub const MAX_PACKAGE_ITEMS: usize = 5_000;
-/// Max number of syntax-error/missing regions collected by ValidateSyntax.
-pub const MAX_ISSUES: usize = 20_000;
-/// Max bytes of source text copied into a single text field (type/value/doc
-/// slices). Keeps a single response bounded well under the platform's 4 MiB
-/// gRPC message limit even on a pathological single-line declaration.
-pub const MAX_SLICE_BYTES: usize = 4_096;
-/// Max nodes visited by an iterative whole-tree scan (definitions, comments,
-/// error collection). Bounds work on a huge, mostly-flat file without
-/// touching recursion at all (every walk in this module is iterative).
-pub const MAX_SCAN_NODES: usize = 2_000_000;
-
-/// Enforce the raw-input size cap. Returns "INPUT_TOO_LARGE" if exceeded.
-pub fn guard_source(text: &str) -> Result<(), String> {
-    if text.len() > MAX_SOURCE_BYTES {
-        return Err("INPUT_TOO_LARGE".to_string());
-    }
-    Ok(())
-}
+// Payload size, output element counts, and scan-node budgets are the
+// platform's job to bound, not this package's — every ceiling that only
+// guarded memory/CPU cost against a hostile caller has been removed. Every
+// tree walk in this module is iterative (an explicit tree-sitter cursor,
+// never native recursion), and a tree-sitter parse tree is finite and
+// acyclic by construction, so none of these walks can fail to terminate or
+// overflow a stack; removing their count ceilings only changes how much
+// legitimate work a large input does, never correctness or safety.
 
 /// Parse `text` with the SystemVerilog grammar (covers Verilog too).
 pub fn parse_verilog(text: &str) -> Result<Tree, String> {
-    guard_source(text)?;
     let mut parser = Parser::new();
     parser
         .set_language(&tree_sitter_systemverilog::LANGUAGE.into())
@@ -63,7 +40,6 @@ pub fn parse_verilog(text: &str) -> Result<Tree, String> {
 
 /// Parse `text` with the VHDL grammar.
 pub fn parse_vhdl(text: &str) -> Result<Tree, String> {
-    guard_source(text)?;
     let mut parser = Parser::new();
     parser
         .set_language(&tree_sitter_vhdl::LANGUAGE.into())
@@ -96,7 +72,6 @@ pub struct DetectResult {
 /// (either both parsed perfectly cleanly — e.g. trivial/near-empty input —
 /// or tied with the same nonzero error count).
 pub fn detect_language(text: &str) -> Result<DetectResult, String> {
-    guard_source(text)?;
     let v_tree = parse_verilog(text)?;
     let d_tree = parse_vhdl(text)?;
     let v_err = count_error_nodes(&v_tree);
@@ -120,7 +95,6 @@ pub fn detect_language(text: &str) -> Result<DetectResult, String> {
 pub fn resolve_language(text: &str, hint: &str) -> Result<String, String> {
     let normalized = normalize_language_hint(hint);
     if !normalized.is_empty() {
-        guard_source(text)?;
         return Ok(normalized.to_string());
     }
     Ok(detect_language(text)?.language)
@@ -132,18 +106,7 @@ pub fn slice(source: &str, start: usize, end: usize) -> String {
     if start >= end {
         return String::new();
     }
-    let raw = &source.as_bytes()[start..end];
-    if raw.len() <= MAX_SLICE_BYTES {
-        String::from_utf8_lossy(raw).into_owned()
-    } else {
-        let mut cut = MAX_SLICE_BYTES;
-        while cut > 0 && !source.is_char_boundary(start + cut) {
-            cut -= 1;
-        }
-        let mut s = String::from_utf8_lossy(&raw[..cut]).into_owned();
-        s.push_str("...");
-        s
-    }
+    String::from_utf8_lossy(&source.as_bytes()[start..end]).into_owned()
 }
 
 fn node_text(node: Node, source: &str) -> String {
@@ -151,20 +114,16 @@ fn node_text(node: Node, source: &str) -> String {
 }
 
 /// Count ERROR + MISSING nodes in a tree via an iterative DFS (no recursion —
-/// safe on deeply nested/adversarial input). Bounded by MAX_SCAN_NODES.
+/// safe on deeply nested/adversarial input; terminates naturally since a
+/// parse tree is finite and acyclic).
 pub fn count_error_nodes(tree: &Tree) -> u32 {
     if !tree.root_node().has_error() {
         return 0;
     }
     let mut count: u32 = 0;
     let mut cursor = tree.walk();
-    let mut visited: usize = 0;
     loop {
         let node = cursor.node();
-        visited += 1;
-        if visited > MAX_SCAN_NODES {
-            return count;
-        }
         if node.is_error() || node.is_missing() {
             count += 1;
         }
@@ -182,21 +141,16 @@ pub fn count_error_nodes(tree: &Tree) -> u32 {
     }
 }
 
-/// Collect every ERROR/MISSING region in a tree (iterative DFS, bounded by
-/// MAX_ISSUES and MAX_SCAN_NODES).
+/// Collect every ERROR/MISSING region in a tree (iterative DFS; terminates
+/// naturally since a parse tree is finite and acyclic).
 pub fn collect_issues(tree: &Tree) -> Vec<HdlSyntaxIssue> {
     let mut out = Vec::new();
     if !tree.root_node().has_error() {
         return out;
     }
     let mut cursor = tree.walk();
-    let mut visited: usize = 0;
     loop {
         let node = cursor.node();
-        visited += 1;
-        if out.len() >= MAX_ISSUES || visited > MAX_SCAN_NODES {
-            return out;
-        }
         if node.is_error() || node.is_missing() {
             let sp = node.start_position();
             let ep = node.end_position();
@@ -225,23 +179,15 @@ pub fn collect_issues(tree: &Tree) -> Vec<HdlSyntaxIssue> {
 }
 
 /// Find every descendant node (anywhere in the tree, iterative DFS, no
-/// recursion) whose kind is exactly `kind`. Bounded by MAX_SCAN_NODES visited
-/// and `max_results` collected.
-fn find_all_of_kind<'a>(root: Node<'a>, kind: &str, max_results: usize) -> Vec<Node<'a>> {
+/// recursion) whose kind is exactly `kind`. Terminates naturally since a
+/// parse tree is finite and acyclic.
+fn find_all_of_kind<'a>(root: Node<'a>, kind: &str) -> Vec<Node<'a>> {
     let mut out = Vec::new();
     let mut cursor = root.walk();
-    let mut visited: usize = 0;
     loop {
         let node = cursor.node();
-        visited += 1;
         if node.kind() == kind {
             out.push(node);
-            if out.len() >= max_results {
-                return out;
-            }
-        }
-        if visited > MAX_SCAN_NODES {
-            return out;
         }
         if cursor.goto_first_child() {
             continue;
@@ -562,7 +508,7 @@ fn decode_param_assignment(assign: Node, shared_type: &str, source: &str) -> Raw
 fn extract_verilog_parameters(header: Node, source: &str) -> Vec<HdlParam> {
     let mut out = Vec::new();
     let Some(param_list) = find_child_kind(header, "parameter_port_list") else { return out };
-    for decl in find_all_of_kind(param_list, "parameter_declaration", MAX_ITEMS_PER_DEFINITION) {
+    for decl in find_all_of_kind(param_list, "parameter_declaration") {
         let mut shared_type = String::new();
         for i in 0..decl.child_count() {
             let Some(c) = decl.child(i) else { continue };
@@ -576,9 +522,6 @@ fn extract_verilog_parameters(header: Node, source: &str) -> Vec<HdlParam> {
                 for j in 0..c.child_count() {
                     let Some(pa) = c.child(j) else { continue };
                     if pa.kind() == "param_assignment" {
-                        if out.len() >= MAX_ITEMS_PER_DEFINITION {
-                            return out;
-                        }
                         let raw = decode_param_assignment(pa, &shared_type, source);
                         out.push(HdlParam {
                             name: raw.name,
@@ -625,7 +568,7 @@ fn extract_verilog_module(module_decl: Node, source: &str) -> HdlModule {
     let mut ports = Vec::new();
     if is_ansi {
         if let Some(port_list) = find_child_kind(header, "list_of_port_declarations") {
-            for decl in find_all_of_kind(port_list, "ansi_port_declaration", MAX_ITEMS_PER_DEFINITION) {
+            for decl in find_all_of_kind(port_list, "ansi_port_declaration") {
                 let raw = decode_ansi_port(decl, source);
                 if raw.name.is_empty() {
                     continue;
@@ -643,7 +586,7 @@ fn extract_verilog_module(module_decl: Node, source: &str) -> HdlModule {
         // Ordered port names from the non-ANSI header's parenthesized list.
         let mut ordered_names: Vec<String> = Vec::new();
         if let Some(list) = find_child_kind(header, "list_of_ports") {
-            for p in find_all_of_kind(list, "port", MAX_ITEMS_PER_DEFINITION) {
+            for p in find_all_of_kind(list, "port") {
                 for i in 0..p.child_count() {
                     if let Some(c) = p.child(i) {
                         if c.kind() == "simple_identifier" || c.kind() == "escaped_identifier" {
@@ -658,7 +601,7 @@ fn extract_verilog_module(module_decl: Node, source: &str) -> HdlModule {
         let mut resolved: std::collections::HashMap<String, (String, String, String, String)> =
             std::collections::HashMap::new();
         for kind in ["input_declaration", "output_declaration", "inout_declaration"] {
-            for decl in find_all_of_kind(module_decl, kind, MAX_ITEMS_PER_DEFINITION) {
+            for decl in find_all_of_kind(module_decl, kind) {
                 let (mode, data_type, width, names) = decode_nonansi_port_decl(decl, source);
                 let doc = item_doc(decl, source);
                 for n in names {
@@ -667,9 +610,6 @@ fn extract_verilog_module(module_decl: Node, source: &str) -> HdlModule {
             }
         }
         for n in ordered_names {
-            if ports.len() >= MAX_ITEMS_PER_DEFINITION {
-                break;
-            }
             let (mode, data_type, width, doc) =
                 resolved.get(&n).cloned().unwrap_or_default();
             ports.push(HdlPort { name: n, direction: mode, data_type, width, doc });
@@ -693,7 +633,7 @@ fn extract_verilog_module(module_decl: Node, source: &str) -> HdlModule {
 
 /// Find every module defined anywhere in a parsed Verilog/SystemVerilog tree.
 pub fn find_all_verilog_modules(tree: &Tree, source: &str) -> Vec<HdlModule> {
-    find_all_of_kind(tree.root_node(), "module_declaration", MAX_DEFINITIONS)
+    find_all_of_kind(tree.root_node(), "module_declaration")
         .into_iter()
         .map(|n| extract_verilog_module(n, source))
         .collect()
@@ -807,14 +747,11 @@ fn normalize_vhdl_mode(mode: &str) -> String {
 }
 
 /// Decode a `generic_clause` or `port_clause`'s `interface_list` into
-/// RawItems, bounded by MAX_ITEMS_PER_DEFINITION.
+/// RawItems.
 fn decode_vhdl_interface_list(clause: Node, source: &str) -> Vec<RawItem> {
     let mut out = Vec::new();
     let Some(list) = find_child_kind(clause, "interface_list") else { return out };
     for i in 0..list.child_count() {
-        if out.len() >= MAX_ITEMS_PER_DEFINITION {
-            break;
-        }
         let Some(c) = list.child(i) else { continue };
         if matches!(
             c.kind(),
@@ -823,7 +760,6 @@ fn decode_vhdl_interface_list(clause: Node, source: &str) -> Vec<RawItem> {
             out.extend(decode_vhdl_interface_decl(c, source));
         }
     }
-    out.truncate(MAX_ITEMS_PER_DEFINITION);
     out
 }
 
@@ -871,7 +807,7 @@ fn extract_vhdl_entity(entity_decl: Node, source: &str) -> HdlModule {
 
 /// Find every entity defined anywhere in a parsed VHDL tree.
 pub fn find_all_vhdl_entities(tree: &Tree, source: &str) -> Vec<HdlModule> {
-    find_all_of_kind(tree.root_node(), "entity_declaration", MAX_DEFINITIONS)
+    find_all_of_kind(tree.root_node(), "entity_declaration")
         .into_iter()
         .map(|n| extract_vhdl_entity(n, source))
         .collect()
@@ -888,9 +824,6 @@ fn decode_vhdl_subprogram(spec: Node, source: &str) -> HdlPackageItem {
     if let Some(param_spec) = find_child_kind(spec, "parameter_list_specification") {
         if let Some(list) = find_child_kind(param_spec, "interface_list") {
             for i in 0..list.child_count() {
-                if parameters.len() >= MAX_ITEMS_PER_DEFINITION {
-                    break;
-                }
                 let Some(c) = list.child(i) else { continue };
                 if matches!(
                     c.kind(),
@@ -937,9 +870,6 @@ fn extract_vhdl_package(pkg_decl: Node, source: &str) -> HdlPackage {
         return HdlPackage { name, items };
     };
     for i in 0..body.child_count() {
-        if items.len() >= MAX_PACKAGE_ITEMS {
-            break;
-        }
         let Some(c) = body.child(i) else { continue };
         match c.kind() {
             "type_declaration" => {
@@ -1027,9 +957,6 @@ fn extract_vhdl_package(pkg_decl: Node, source: &str) -> HdlPackage {
                 }
                 let doc = item_doc(c, source);
                 for n in names {
-                    if items.len() >= MAX_PACKAGE_ITEMS {
-                        break;
-                    }
                     items.push(HdlPackageItem {
                         name: n,
                         kind: "constant".to_string(),
@@ -1059,7 +986,7 @@ fn extract_vhdl_package(pkg_decl: Node, source: &str) -> HdlPackage {
 
 /// Find every package defined anywhere in a parsed VHDL tree.
 pub fn find_all_vhdl_packages(tree: &Tree, source: &str) -> Vec<HdlPackage> {
-    find_all_of_kind(tree.root_node(), "package_declaration", MAX_DEFINITIONS)
+    find_all_of_kind(tree.root_node(), "package_declaration")
         .into_iter()
         .map(|n| extract_vhdl_package(n, source))
         .collect()

@@ -82,11 +82,15 @@ mod tests {
     }
 
     #[test]
-    fn test_oversized_input_is_input_too_large() {
+    fn test_large_input_no_crash() {
+        // Payload-size limits are the platform's job, not this node's; a
+        // large input must still parse cleanly (recovering zero entities
+        // from non-HDL text) instead of crashing.
         let ax = test_context();
         let big = "x".repeat(2_000_001);
         let out = parse_vhdl_entities(&ax, src(&big)).unwrap();
-        assert_eq!(out.error, "INPUT_TOO_LARGE");
+        assert_eq!(out.error, "");
+        assert_eq!(out.entity_count, 0);
     }
 
     #[test]

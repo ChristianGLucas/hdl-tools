@@ -1,5 +1,5 @@
 name: christiangeorgelucas/hdl-tools
-version: 0.1.0
+version: 0.1.1
 language: rust
 description: >-
   Deterministic structural parsing and interface inspection for Hardware
